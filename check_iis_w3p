@@ -1,0 +1,161 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+use Nagios::Plugin;
+use Nagios::Plugin::Performance;
+use File::Basename;
+
+my $nrpe = "/usr/local/nagios/libexec/check_nrpe";
+
+my $version = "0.0.2";
+my $pluginName = basename($0);
+
+my $np = Nagios::Plugin->new(
+	shortname => "CheckIISW3p",
+	usage => "Usage: %s -iisversion <iis6 or iis7> \n"
+	.	"	-H <HostAddress> \n"
+	.	"	[-c <Critical Mb Value>] \n"
+	.	"	[-w <Warning Mb Value>] \n"
+	.	"	[-d <Debug YES or NO>] \n"
+	.	"	[-h] \n",
+	version => $version,
+	plugin => $pluginName,
+	);
+$np->add_arg(
+	spec => "iisversion|i=s",
+	help => "-i --iisverion=STRING iis6 or iis7",
+	required => 1,
+	);
+$np->add_arg(
+	spec => "hostaddress|H=s",
+	help => "-H --hostaddress=STRING hostaddress",
+	required => 1,
+	);
+$np->add_arg(
+	spec => "critical|c=s",
+	help => "-c --critical=STRING Value in MB",
+	required => 0,
+	);
+$np->add_arg(
+	spec => "warning|w=s",
+	help => "-w --warning=STRING Value in MB",
+	required => 0,
+	);
+$np->add_arg(
+	spec => "debug|d=s",
+	help => "-d --debug=STRING YES or NO",
+	required => 0,
+	);
+
+$np->getopts;
+
+my $hostaddress = $np->opts->hostaddress;
+my $iisversion = $np->opts->iisversion;
+my $critical = $np->opts->critical;
+my $warning = $np->opts->warning;
+my $min = 0;
+my $max = 2000;
+
+# Get Command Status
+# Define Arguments
+my $getw3pstatusarg = "-IISVersion ${iisversion} -outputReturn file";
+if (defined $critical) {
+	$getw3pstatusarg = $getw3pstatusarg . " -appMemCrit ${critical}";
+}
+
+if (defined $critical) {
+	$getw3pstatusarg = $getw3pstatusarg . " -appMemWarn ${warning}";
+}
+
+$getw3pstatusarg = "\'" . $getw3pstatusarg . "\'";
+
+my $getw3pstatus = `$nrpe -t 60 -H $hostaddress -c get_iis_w3p -a ${getw3pstatusarg}`;
+my $exitstatus = $getw3pstatus;
+my $outputmsg;
+my $exit;
+
+if ($exitstatus == 0){
+	$outputmsg = "All Applications inside threshols";
+	$exit = 0
+} elsif ($exitstatus == 1){
+	$outputmsg = "Some Application are consuming more then ${warning} Mbytes";
+	$exit = 1
+} elsif ($exitstatus == 2){
+	$outputmsg = "Some Application are consuming more then ${critical} Mbytes";
+	$exit = 2
+} else {
+	$outputmsg = "Can\'t find Application running";
+	$exit = 3
+}
+# Get W3p Apps Names
+my $getw3pnameargs = "-IISVersion ${iisversion} -outputReturn appname";
+$getw3pnameargs = "\'" . $getw3pnameargs . "\'";
+
+my $getw3pname = `$nrpe -t 60 -H $hostaddress -c get_iis_w3p -a ${getw3pnameargs}`;
+my @appsname = split(/;/, $getw3pname);
+
+# Get W#P Apps mem
+my $getw3pmemarg = "-IISVersion ${iisversion} -outputReturn appmem";
+$getw3pmemarg = "\'" . $getw3pmemarg . "\'";
+
+my $getw3pmem = `$nrpe -t 60 -H $hostaddress -c get_iis_w3p -a ${getw3pmemarg}`;
+my @appsmem = split(/;/, $getw3pmem);
+
+my $msgoutput;
+my $i = 0;
+my $appname;
+my $appmem;
+my $appmsg;
+my $countapps = scalar(@appsname);
+
+foreach $appname (@appsname){
+
+	if ($i < ($countapps - 1 )) {
+		$appmem = $appsmem[$i];
+
+		if ($appmem >= $critical) {
+
+			#markdown message - BOLD
+			$appmsg =  "**${appname}=${appmem}MB**";		
+
+		} elsif ($appmem >= $warning && $appmem < $critical) {
+
+			#markdown message - BOLD
+			$appmsg =  "**${appname}=${appmem}MB**";		
+
+		} else {
+
+			#Do not markdown message
+			$appmsg =  "${appname}=${appmem}MB";		
+		}
+
+		if($i == 0){
+			$msgoutput = "${appmsg}";	
+		} elsif ($i <= $countapps - 2) {
+			$msgoutput = "${msgoutput} ${appmsg}";
+		} else {
+			$msgoutput = "${msgoutput} ${appmsg}";
+		}
+
+		#$perfdata = $perfdata . "${appname}=${appmem}[$i]; ";
+
+		$np->add_perfdata(
+			label => $appname,
+			value => $appmem,
+			warning => $warning,
+			critical => $critical,
+			min => $min,
+			max => $max,
+			uom => "MB",
+		);
+	}
+		$i = $i + 1;
+} 
+
+$np->nagios_exit(
+	return_code => $exit,
+	#message =>  $outputmsg,
+	message =>  $msgoutput,
+	);
+
+
