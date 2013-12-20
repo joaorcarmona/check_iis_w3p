@@ -7,7 +7,7 @@ use File::Basename;
 
 my $nrpe = "/usr/local/nagios/libexec/check_nrpe";
 
-my $version = "0.0.2";
+my $version = "0.0.3";
 my $pluginName = basename($0);
 
 my $np = Nagios::Plugin->new(
@@ -71,91 +71,90 @@ $getw3pstatusarg = "\'" . $getw3pstatusarg . "\'";
 
 my $getw3pstatus = `$nrpe -t 60 -H $hostaddress -c get_iis_w3p -a ${getw3pstatusarg}`;
 my $exitstatus = $getw3pstatus;
-my $outputmsg;
+my $msgoutput;
 my $exit;
 
 if ($exitstatus == 0){
-	$outputmsg = "All Applications inside threshols";
-	$exit = 0
+	#$msgoutput = "All Applications inside threshols";
+	$exit = 0;
 } elsif ($exitstatus == 1){
-	$outputmsg = "Some Application are consuming more then ${warning} Mbytes";
-	$exit = 1
+	#$msgoutput = "Some Application are consuming more then ${warning} Mbytes";
+	$exit = 1;
 } elsif ($exitstatus == 2){
-	$outputmsg = "Some Application are consuming more then ${critical} Mbytes";
-	$exit = 2
+	#$msgoutput = "Some Application are consuming more then ${critical} Mbytes";
+	$exit = 2;
 } else {
-	$outputmsg = "Can\'t find Application running";
-	$exit = 3
+	$msgoutput = "Can\'t find Application running. Assuming OK";
+	$exit = 0;
 }
-# Get W3p Apps Names
-my $getw3pnameargs = "-IISVersion ${iisversion} -outputReturn appname";
-$getw3pnameargs = "\'" . $getw3pnameargs . "\'";
 
-my $getw3pname = `$nrpe -t 60 -H $hostaddress -c get_iis_w3p -a ${getw3pnameargs}`;
-my @appsname = split(/;/, $getw3pname);
+if ($exitstatus != 3){
+	
+	# Get W3p Apps Names
+	my $getw3pnameargs = "-IISVersion ${iisversion} -outputReturn appname";
+	$getw3pnameargs = "\'" . $getw3pnameargs . "\'";
 
-# Get W#P Apps mem
-my $getw3pmemarg = "-IISVersion ${iisversion} -outputReturn appmem";
-$getw3pmemarg = "\'" . $getw3pmemarg . "\'";
+	my $getw3pname = `$nrpe -t 60 -H $hostaddress -c get_iis_w3p -a ${getw3pnameargs}`;
+	my @appsname = split(/;/, $getw3pname);
 
-my $getw3pmem = `$nrpe -t 60 -H $hostaddress -c get_iis_w3p -a ${getw3pmemarg}`;
-my @appsmem = split(/;/, $getw3pmem);
+	# Get W3P Apps mem
+	my $getw3pmemarg = "-IISVersion ${iisversion} -outputReturn appmem";
+	$getw3pmemarg = "\'" . $getw3pmemarg . "\'";
 
-my $msgoutput;
-my $i = 0;
-my $appname;
-my $appmem;
-my $appmsg;
-my $countapps = scalar(@appsname);
+	my $getw3pmem = `$nrpe -t 60 -H $hostaddress -c get_iis_w3p -a ${getw3pmemarg}`;
+	my @appsmem = split(/;/, $getw3pmem);
 
-foreach $appname (@appsname){
+	my $msgoutput;
+	my $i = 0;
+	my $appname;
+	my $appmem;
+	my $appmsg;
+	my $countapps = scalar(@appsname);
 
-	if ($i < ($countapps - 1 )) {
-		$appmem = $appsmem[$i];
+	foreach $appname (@appsname){
 
-		if ($appmem >= $critical) {
+		if ($i < ($countapps - 1 )) {
+			$appmem = $appsmem[$i];
 
-			#markdown message - BOLD
-			$appmsg =  "**${appname}=${appmem}MB**";		
+			if ($appmem >= $critical) {
 
-		} elsif ($appmem >= $warning && $appmem < $critical) {
+				#markdown message - BOLD
+				$appmsg =  "**${appname}=${appmem}MB**";		
 
-			#markdown message - BOLD
-			$appmsg =  "**${appname}=${appmem}MB**";		
+			} elsif ($appmem >= $warning && $appmem < $critical) {
 
-		} else {
+				#markdown message - BOLD
+				$appmsg =  "**${appname}=${appmem}MB**";		
 
-			#Do not markdown message
-			$appmsg =  "${appname}=${appmem}MB";		
+			} else {
+
+				#Do not markdown message
+				$appmsg =  "${appname}=${appmem}MB";		
+			}
+
+			if($i == 0){
+				$msgoutput = "${appmsg}";	
+			} elsif ($i <= $countapps - 2) {
+				$msgoutput = "${msgoutput} ${appmsg}";
+			} else {
+				$msgoutput = "${msgoutput} ${appmsg}";
+			}
+
+			$np->add_perfdata(
+				label => $appname,
+				value => $appmem,
+				warning => $warning,
+				critical => $critical,
+				min => $min,
+				max => $max,
+				uom => "MB",
+			);
 		}
-
-		if($i == 0){
-			$msgoutput = "${appmsg}";	
-		} elsif ($i <= $countapps - 2) {
-			$msgoutput = "${msgoutput} ${appmsg}";
-		} else {
-			$msgoutput = "${msgoutput} ${appmsg}";
-		}
-
-		#$perfdata = $perfdata . "${appname}=${appmem}[$i]; ";
-
-		$np->add_perfdata(
-			label => $appname,
-			value => $appmem,
-			warning => $warning,
-			critical => $critical,
-			min => $min,
-			max => $max,
-			uom => "MB",
-		);
-	}
 		$i = $i + 1;
-} 
+	} 
+}
 
 $np->nagios_exit(
 	return_code => $exit,
-	#message =>  $outputmsg,
 	message =>  $msgoutput,
 	);
-
-
